@@ -1,0 +1,1 @@
+"""MediAssist backend package."""
