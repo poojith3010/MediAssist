@@ -1,11 +1,14 @@
 from dataclasses import dataclass
 import json
+import logging
 from typing import Iterable
 
 import httpx
 
 from .config import get_settings
 from .models import Document, DocumentChunk
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -29,7 +32,7 @@ def _lexical_retrieve(question: str, documents: list[Document], limit: int) -> l
 def _embed(texts: list[str]) -> list[list[float]]:
     from sentence_transformers import SentenceTransformer
 
-    model = SentenceTransformer(get_settings().embedding_model)
+    model = SentenceTransformer(get_settings().embedding_model, local_files_only=True)
     return model.encode(texts, normalize_embeddings=True).tolist()
 
 
@@ -40,6 +43,10 @@ def index_chunks(chunks: Iterable[DocumentChunk]) -> None:
     try:
         vectors = _embed([chunk.content for chunk in chunk_list])
     except ImportError:
+        logger.info("Optional embedding dependencies are not installed; using lexical retrieval")
+        return
+    except OSError:
+        logger.warning("Configured embedding model is not cached locally; using lexical retrieval")
         return
     for chunk, vector in zip(chunk_list, vectors):
         chunk.embedding = json.dumps(vector)
@@ -61,7 +68,8 @@ def retrieve(question: str, documents: list[Document], limit: int = 4) -> list[R
         by_id = {chunk.id: chunk for chunk in chunks}
         selected = [by_id[chunks[position].id] for position in positions[0] if position >= 0]
         return [RetrievedChunk(next(doc for doc in documents if doc.id == chunk.document_id), chunk.content, chunk.page_number) for chunk in selected]
-    except ImportError:
+    except (ImportError, OSError):
+        logger.warning("FAISS or local embedding model unavailable; using lexical retrieval")
         return _lexical_retrieve(question, documents, limit)
 
 
